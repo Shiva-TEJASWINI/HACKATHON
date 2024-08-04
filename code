@@ -1,0 +1,410 @@
+// MUX
+#define MUX_A D3 // S3
+#define MUX_B D2 // S2
+#define MUX_C D1 // S1
+#define MUX_D D0 // S0
+// LED
+#define red D4
+#define yellow D5
+#define green D6
+// Analog for soil moisture, water level, rain
+#define ANALOG_INPUT A0 // SIGNAL PIN ON MUX
+// Relay
+#define RELAY_PIN D7 // The ESP8266 pin D7 that connects to relay
+#define MOISTURE_THRESHOLD 50 // Threshold for soil moisture percentage
+// DHT Sensor
+#include <DHT.h>
+#include <DHT_U.h>
+#define DHT_SENSOR_PIN D8 // The ESP8266 pin D8 connected to DHT11 sensor
+#define DHT_SENSOR_TYPE DHT11
+DHT dht_sensor(DHT_SENSOR_PIN, DHT_SENSOR_TYPE);
+// WiFi
+#include <ESP8266WiFi.h>
+const char* ssid = "Me";
+const char* password = "MMMMMMMM";
+WiFiClientSecure client;
+// Telegram
+#include <UniversalTelegramBot.h>   // Universal Telegram Bot Library written by Brian Lough: https://github.com/witnessmenow/Universal-Arduino-Telegram-Bot
+#include <ArduinoJson.h>
+// Initialize Telegram BOT
+#define BOTtoken "7405061680:AAFCEhi7ceBIfTCXAEJE9Hqz_GTD-GeysI0"  // your Bot Token (Get from Botfather)
+#define CHAT_ID "5989476137"
+//#define CHAT_ID "1002116062"
+
+#ifdef ESP8266
+X509List cert(TELEGRAM_CERTIFICATE_ROOT);
+#endif
+UniversalTelegramBot bot(BOTtoken, client);
+#define BOTtoken1 "7292123197:AAFyZIF0kEieQptQOK_wcK3Bo6pE8NYu8jA"  // your Bot Token (Get from Botfather)
+UniversalTelegramBot bot2(BOTtoken1, client);
+#define BOTtoken2 "7008038969:AAENg9LKylLleOoLn6jMZIOoqSD5m69Bu4A"  // your Bot Token (Get from Botfather)
+UniversalTelegramBot bot3(BOTtoken2, client);
+// Checks for new messages every 1 second.
+int botRequestDelay = 1000;
+unsigned long lastTimeBotRan;
+bool status=digitalRead(RELAY_PIN); // Ensure motor is off
+// Define moisture levels
+#define MOISTURE_HIGH 350
+#define MOISTURE_LOW 800
+// Add these variables to track time and previous values
+unsigned long motorOnTime = 0;         // Time when the motor was turned on
+int previousSoilMoistureValue = 0;    // Previous soil moisture value
+
+void setup() {
+// WiFi checking
+Serial.begin(9600);
+delay(10);
+Serial.println("Connecting to ");
+Serial.println(ssid);
+WiFi.begin(ssid, password);
+while (WiFi.status() != WL_CONNECTED) {
+delay(500);
+Serial.print(".");
+
+}
+Serial.println("");
+Serial.println("WiFi connected");
+// Telegram
+#ifdef ESP8266
+configTime(0, 0, "pool.ntp.org"); // get UTC time via NTP
+client.setTrustAnchors(&cert); // Add root certificate for api.telegram.org
+#endif
+// Initialize relay to OFF state
+pinMode(RELAY_PIN, OUTPUT);
+
+
+// Pin modes
+pinMode(red, OUTPUT);      // Red LED Pin Connected To D4 Pin
+pinMode(yellow, OUTPUT);  // Yellow LED Pin Connected To D5 Pin
+pinMode(green, OUTPUT);   // Green LED Pin Connected To D6 Pin
+// Initialize MUX pins
+pinMode(MUX_A, OUTPUT); // D3
+pinMode(MUX_B, OUTPUT); // D2
+pinMode(MUX_C, OUTPUT); // D1
+pinMode(MUX_D, OUTPUT); // D0
+// Initialize DHT sensor
+dht_sensor.begin(); // Initialize the DHT sensor
+}
+void changeMux(int d, int c, int b, int a) {
+digitalWrite(MUX_A, a);
+digitalWrite(MUX_B, b);
+digitalWrite(MUX_C, c);
+digitalWrite(MUX_D, d);
+}
+void handleNewMessages(int numNewMessages) {
+for (int i = 0; i < numNewMessages; i++) {
+String chat_id = String(bot.messages[i].chat_id);
+if (chat_id != CHAT_ID) {
+bot.sendMessage(chat_id, "Unauthorized user", "");
+continue;
+}
+String text = bot.messages[i].text;
+String from_name = bot.messages[i].from_name;
+Serial.print("Received message: ");
+Serial.println(text);
+if (text == "/start") {
+String welcome = "🌟 *Welcome, " + from_name + "!* 🌟\n\n";
+welcome += "I’m your farm assistant 🤖 here to help you manage your farm and keep it thriving! 🌻🌿\n\n";
+welcome += "Here’s what I can do for you:\n\n";
+welcome += "🔄 */on* - Turn ON the motor to water your crops 🌱\n";
+welcome += "🔄 */off* - Turn OFF the motor to stop watering 🛑🚫\n";
+welcome += "🔄 */state* - Check if the motor is currently ON or OFF 🚦\n";
+welcome += "🌧️ */rain* - Check the current rain status 🌧️☀️\n";
+welcome += "🌡️ */temp* - Get the current temperature of your farm 🌡️🔥❄️\n";
+welcome += "💧 */humidity* - Get the current humidity level 🌬️\n";
+welcome += "📏 */level* - Check the water level in the tank 📏\n";
+welcome += "🌱 */moisture* - Check the soil moisture percentage 🌱\n";
+welcome += "📋 */status* - Get the overall status of your farm 📋\n\n";
+welcome += "🛑*/help* - Facing Troubles\n\n";
+welcome += "Feel free to use these commands to manage and monitor your farm. Happy Farming! 🌼🌷";
+
+String keyboard = "[[{\"text\":\"/on\"},{\"text\":\"/off\"}],"
+"[{\"text\":\"/state\"},{\"text\":\"/rain\"}],"
+"[{\"text\":\"/temp\"},{\"text\":\"/humidity\"}],"
+"[{\"text\":\"/level\"},{\"text\":\"/moisture\"}],"
+"[{\"text\":\"/status\"}]]";
+
+String replyMarkup = "{\"keyboard\":" + keyboard + ",\"resize_keyboard\":true}";
+bot.sendMessage(chat_id, welcome, "Markdown");
+bot.sendMessage(chat_id, replyMarkup, "");
+Serial.println("Command /start received. Welcome message sent.");
+}
+if (text == "/on") {
+if (status == LOW) {
+
+digitalWrite(RELAY_PIN, HIGH);
+bot.sendMessage(chat_id, "✅ Motor is now *ON*. Ready to water your crops! 🌱", "Markdown");
+Serial.println("Motor turned ON.");
+delay(60000);
+} else {
+bot.sendMessage(chat_id, "⚠️ Motor is already *ON*.", "");
+Serial.println("Motor is already ON.");
+}
+}
+if (text == "/off") {
+if (status == HIGH) {
+
+digitalWrite(RELAY_PIN, LOW);
+bot.sendMessage(chat_id, "✅ Motor is now *OFF*. No more watering for now. 🛑", "Markdown");
+Serial.println("Motor turned OFF.");
+delay(60000);
+} else {
+bot.sendMessage(chat_id, "⚠️ Motor is already *OFF*.", "");
+Serial.println("Motor is already OFF.");
+}
+}
+if (text == "/state") {
+if (status == HIGH) {
+bot.sendMessage(chat_id, "🔄 Motor is currently *OFF*.", "");
+Serial.println("Motor state: OFF.");
+} else {
+bot.sendMessage(chat_id, "🔄 Motor is currently *ON*.", "");
+Serial.println("Motor state: ON.");
+}
+}
+if (text == "/rain") {
+changeMux(LOW, LOW, HIGH, LOW);
+int sensorValue3 = analogRead(A0);
+String rain = "🌧️ Rain Sensor Value: " + String(sensorValue3);
+if (sensorValue3 >= 990) {
+bot.sendMessage(chat_id, rain + "\n☀️ No rain detected. 🌞", "");
+Serial.println("Rain status: No rain.");
+} else {
+bot.sendMessage(chat_id, rain + "\n🌧️ Rain detected! Take precautions to protect your crops. 🛡️", "");
+Serial.println("Rain status: Rain detected.");
+}
+}
+if (text == "/temp") {
+float temperature_C = dht_sensor.readTemperature();
+String temp = "🌡️ Current Temperature: " + String(temperature_C) + "°C";
+bot.sendMessage(chat_id, temp, "");
+Serial.print("Temperature: ");
+Serial.print(temperature_C);
+Serial.println("°C");
+}
+if (text == "/humidity") {
+float humidity = dht_sensor.readHumidity();
+String hum = "💧 Current Humidity: " + String(humidity) + "%";
+bot.sendMessage(chat_id, hum, "");
+Serial.print("Humidity: ");
+Serial.print(humidity);
+Serial.println("%");
+}
+if (text == "/level") {
+changeMux(LOW, LOW, LOW, HIGH);
+int sensorValue2 = analogRead(A0);
+float waterLevel = map(sensorValue2, 350, 520, 1, 4);
+String level = "📏 Water Level: " + String(waterLevel) + " cm (Raw Value: " + String(sensorValue2) + ")";
+if (sensorValue2 < 350) {
+bot.sendMessage(chat_id, level + "\n🔴 Low water level - Immediate action required! ⚠️", "");
+Serial.println("Water level: Low.");
+} else if (sensorValue2 > 540) {
+bot.sendMessage(chat_id, level + "\n🟢 HIGH water level -. ✅", "");
+Serial.println("Water level: Full.");
+} else {
+bot.sendMessage(chat_id, level + "\n🟡 Medium water level - . ⏳", "");
+Serial.println("Water level: Medium.");
+}
+}
+if (text == "/moisture") {
+changeMux(LOW, LOW, LOW, LOW);
+int soilMoistureValue = analogRead(A0);
+int soilMoisturePercentage = map(soilMoistureValue, MOISTURE_LOW, MOISTURE_HIGH, 0, 100);
+String moisture = "🌱 Soil Moisture Percentage: " + String(soilMoisturePercentage) + "%";
+bot.sendMessage(chat_id, moisture, "");
+Serial.print("Soil moisture percentage: ");
+Serial.print(soilMoisturePercentage);
+Serial.println("%");
+}
+if (text == "/status") {
+// Read soil moisture
+changeMux(LOW, LOW, LOW, LOW);
+int soilMoistureValue = analogRead(A0);
+int soilMoisturePercentage = map(soilMoistureValue, MOISTURE_LOW, MOISTURE_HIGH, 0, 100);
+// Read temperature and humidity
+float humidity = dht_sensor.readHumidity();
+float temperature_C = dht_sensor.readTemperature();
+// Read water level
+changeMux(LOW, LOW, LOW, HIGH);
+int waterLevelValue = analogRead(A0);
+float waterLevel = map(waterLevelValue, 350, 520, 1, 4);
+// Read rain sensor
+changeMux(LOW, LOW, HIGH, LOW);
+int rainSensorValue = analogRead(A0);
+String rainStatus = (rainSensorValue < 1010) ? "🌧️ Rain detected. Take precautions!" : "☀️ No rain detected.";
+// Send the status
+String status = "📋 *Farm Status*:\n\n";
+status += "🌡️ *Temperature*: " + String(temperature_C) + "°C\n";
+status += "💧 *Humidity*: " + String(humidity) + "%\n";
+status += "🌱 *Soil Moisture*: " + String(soilMoisturePercentage) + "%\n";
+status += "📏 *Water Level*: " + String(waterLevel) + " cm\n";
+status += rainStatus;
+bot.sendMessage(chat_id, status, "Markdown");
+Serial.println("Farm status sent.");
+}
+if(text == "/help"){
+String welcome2 = "🌟 *Hello, " + from_name + "!* 🌟\n\n";
+welcome2 += "Dont worry.I’m your troubleshoot assistant 🤖 here to help you! 🌻🌿\n\n";
+welcome2 += "Here’s what I can do for you:\n\n";
+welcome2 += "🔄 */trouble1* -  Soil moisture did not increase even after motor on. 🌱\n";
+welcome2 += "🔄 */trouble2* -  waterlevel 💧did not increase after even after motor on🛑🚫\n";
+welcome2 += "🔄 */trouble3* - ❌ Failed to read from DHT sensor!🚦\n";
+welcome2 += "🌧️ */trouble4* - Motor doesnot off even soilMoisturePercentage >71%. 🌧️☀️\n";
+welcome2 += "🌡️ */trouble5* - Rain is not detected by system❄️\n";
+bot.sendMessage(chat_id, welcome2, "Markdown");
+
+
+}
+if (text == "/trouble1") {
+bot.sendMessage(chat_id, "⟬SOLUTION🟢⟭:\n1. Ensure the soil moisture sensor is placed correctly.\n2. If step 1 does not resolve the issue, try replacing the sensor.", "Markdown");
+}
+if (text == "/trouble2") {
+bot.sendMessage(chat_id, "⟬SOLUTION🟢⟭:\n1. Ensure the water level sensor is placed correctly.\n2. If step 1 does not resolve the issue, try replacing the sensor.", "Markdown");
+}
+if (text == "/trouble3") {
+bot.sendMessage(chat_id, "⟬SOLUTION🟢⟭:\n1. Check the power supply and data pin connected to the D8 pin.\n2. If step 1 does not resolve the issue, try replacing the sensor.", "Markdown");
+}
+if (text == "/trouble4") {
+bot.sendMessage(chat_id, "⟬SOLUTION🟢⟭:\n1. Check the relay connections.\n2. If step 1 does not resolve the issue, try replacing the relay.", "Markdown");
+}
+if (text == "/trouble5") {
+bot.sendMessage(chat_id, "⟬SOLUTION🟢⟭:\n1. Check the connections of the rainwater sensor.\n2. If step 1 does not resolve the issue, try replacing the sensor.", "Markdown");
+}
+}
+}
+void loop() {
+// Read rain sensor
+changeMux(LOW, LOW, HIGH, LOW);
+int rainSensorValue = analogRead(A0);
+if (rainSensorValue < 900) {
+Serial.println("🌧️ Rain detected. Take precautions!");
+Serial.println(rainSensorValue);
+bot2.sendMessage(CHAT_ID,"🌧️ Rain detected! Take necessary precautions.", "");
+//delay(10000);
+} else {
+Serial.println("☀️ No rain detected.");
+Serial.println(rainSensorValue);
+}
+// Read soil moisture
+changeMux(LOW, LOW, LOW, LOW);
+int soilMoistureValue = analogRead(A0);
+int soilMoisturePercentage = map(soilMoistureValue, MOISTURE_LOW, MOISTURE_HIGH, 0, 100);
+Serial.print("🌱 Soil Moisture Percentage: ");
+Serial.print(soilMoisturePercentage);
+Serial.println("%");
+
+// Check if motor is ON
+if (status == HIGH) {
+// Track the time when the motor is turned on
+if (motorOnTime == 0) {
+motorOnTime = millis();  // Set the time when the motor was turned on
+previousSoilMoistureValue = soilMoistureValue;  // Record the initial soil moisture value
+}
+
+// Check if soil moisture has not increased after 30 seconds
+if (millis() - motorOnTime >= 30000) {
+if (soilMoisturePercentage < 50) {
+Serial.println("⚠️ Warning: Soil moisture did not increase even after motor turned on.");
+bot3.sendMessage(CHAT_ID,"⚠️ Warning: Soil moisture did not increase even after water supply.  for help  go to https://t.me/MyFarmUpdatesBot and give command:/help", "");
+}
+}
+
+// Check if water level is less than 1 after 1 minute
+if (millis() - motorOnTime >= 30000) {
+changeMux(LOW, LOW, LOW, HIGH);
+int waterLevelValue = analogRead(A0);
+float waterLevel = map(waterLevelValue, 350, 520, 1, 4);
+if (waterLevel < 1) {
+Serial.println("⚠️ Warning: Water level sensor value indicates the water level is less than 1cm even after motor turn on.");
+bot3.sendMessage(CHAT_ID,"⚠️ Warning: Water level sensor value indicates the water level is less than 1cm even after motor turn on. for help  go to https://t.me/MyFarmUpdatesBot and give command:/help", "");
+}
+}
+} else {
+// Reset the motorOnTime variable when the motor is turned off
+motorOnTime = 0;
+}
+
+
+// Control the motor based on soil moisture
+if (soilMoisturePercentage < MOISTURE_THRESHOLD&&rainSensorValue>900) {
+Serial.println("💧 Soil is DRY(No rain Detected). Motor is ON to water the crops.");
+digitalWrite(RELAY_PIN, HIGH);
+}
+else {
+
+digitalWrite(RELAY_PIN, LOW);
+
+}
+if (soilMoisturePercentage < MOISTURE_THRESHOLD&&rainSensorValue<900) {
+Serial.println("💧 Soil is DRY and Rain Detected (MOTOR OFF).");
+bot2.sendMessage(CHAT_ID,"🌧️Soil is DRY and Rain Detected (MOTOR OFF)", "");
+}
+if (soilMoisturePercentage > MOISTURE_THRESHOLD) {
+Serial.println("💧 Soil is WET. Motor is OFF .");
+
+digitalWrite(RELAY_PIN, LOW);
+}
+// Read temperature and humidity
+float humidity = dht_sensor.readHumidity();
+float temperature_C = dht_sensor.readTemperature();
+// Check if readings are successful
+if (isnan(temperature_C) || isnan(humidity)) {
+Serial.println("❌ Failed to read from DHT sensor!");
+bot3.sendMessage(CHAT_ID,"❌ Failed to read from DHT sensor! for help  go to @MyFarmUpdatesBot and give command:/help","");
+
+} else {
+Serial.print("🌡️ Temperature: ");
+Serial.print(temperature_C);
+Serial.println("°C");
+Serial.print("💧 Humidity: ");
+Serial.print(humidity);
+Serial.println("%");
+}
+if(humidity>80){
+bot2.sendMessage(CHAT_ID,"humidity>75% high chances of rain!🌧️", "");
+// delay(100000);
+}
+// Read water level
+changeMux(LOW, LOW, LOW, HIGH);
+int waterLevelValue = analogRead(A0);
+float waterLevel = map(waterLevelValue, 350, 520, 1, 4);
+Serial.print("📏 Water Level: ");
+Serial.print(waterLevel);
+Serial.println(" cm");
+if (waterLevelValue < 350) {
+waterLevel = 0; // Set water level to 0 if sensor value is less than 350
+Serial.print("📏 Water Level: ");
+Serial.print(waterLevel);
+Serial.println(" cm");
+}
+// Control the LEDs based on water level
+if (waterLevelValue < 350) {
+digitalWrite(red, HIGH);
+digitalWrite(yellow, LOW);
+digitalWrite(green, LOW);
+bot2.sendMessage(CHAT_ID,"🔴 Low water level!", "");
+//delay(100000);
+Serial.println("🔴 Low water level!");
+} else if (waterLevelValue > 500) {
+digitalWrite(red, LOW);
+digitalWrite(yellow, LOW);
+digitalWrite(green, HIGH);
+Serial.println("🟢 Water level is full.");
+} else {
+digitalWrite(red, LOW);
+digitalWrite(yellow, HIGH);
+digitalWrite(green, LOW);
+Serial.println("🟡 Medium water level.");
+}
+
+delay(1000); // Delay to avoid hitting API rate limits
+// Handle Telegram bot requests
+if (millis() > lastTimeBotRan + botRequestDelay) {
+int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+while (numNewMessages) {
+handleNewMessages(numNewMessages);
+numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+}
+lastTimeBotRan = millis();
+}
+}
